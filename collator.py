@@ -14,6 +14,8 @@ This file can also be imported as a module and contains the following
 functions:
 - `extract_audio` - extracts audio data between two timestamps and returns an array
 - `extract_raw` - extracts raw data between two timestamps and returns a dataframe
+- `time_encoder` - converts a pandas timestamp to a string
+- `time_decoder` - converts a file name string to a pandas timestamp
 - `main` - the main function of the script
 """
 
@@ -23,6 +25,7 @@ import argparse
 import os
 from scipy.io import wavfile
 import re
+import math
 
 #================================================= GLOBAL VARS =================================================#
 RAW = "/mnt/w/krpm/raw/"                                                    # Location of raw files
@@ -32,6 +35,33 @@ TZ = 'EST'                                                                  # Ti
 SENSORS = { "sensor0": [], "sensor2" : [] }                                 # Dictionary of audio sensors
 RAWS = []                                                                   # List of raw files (don't change)
 #==============================================================================================================#
+
+def time_encoder(time: pd.Timestamp) -> str:
+    """Converts a pandas timestamp to a string.
+
+    Args:
+        time : pd.Timestamp
+            Timestamp to convert.
+
+    Returns:
+        str
+    """
+    
+    return time.strftime("%Y%m%d_%H%M%S.%f")
+
+def time_decoder(time: str) -> pd.Timestamp:
+    """Converts a string to a pandas timestamp.
+
+    Args:
+        time : str
+            Timestamp in the format YYYYMMDD_HHMMSS
+
+    Returns:
+        pd.Timestamp
+    """
+    
+    return pd.Timestamp(time[0:4] + "-" + time[4:6] + "-" + time[6:8] + " " + time[9:11]
+                        + ":" + time[11:13] + ":" + time[13:15] + "." + time[16:], tz=TZ)
 
 def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list, out_dir: str) -> None:
     """Extract audio data between two timestamps and write to file.
@@ -49,6 +79,52 @@ def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list, out
     Returns:
         None
     """
+    
+    # Find first audio file that contains data
+    i = 0
+    sensor = re.split('[_.]', audio_files[i])[-2]
+    file_start = time_decoder(audio_files[i].split("/")[-1].split(".")[0])
+    while i < len(audio_files) and file_start + pd.Timedelta(30, unit="m") < start:
+        i += 1
+        file_start = time_decoder(audio_files[i].split("/")[-1].split(".")[0]) 
+    
+    if i == len(audio_files):
+        print("No audio files found for sensor " + sensor)
+        return
+    
+    # Trim first audio file
+    rate, data = wavfile.read(audio_files[i])
+    
+    # start time + 1/rate * index >= start
+    start_index = math.ceil((start - file_start).total_seconds() * rate)
+    data = data[start_index:]
+    file_start += pd.Timedelta(start_index / rate, unit="s")
+    
+    # Write to file
+    wavfile.write(out_dir + sensor + "_" + time_encoder(file_start) + ".wav", rate, data)
+    print("Extracted " + pd.Timedelta(30 - start_index / rate, unit="m") + " minutes from " + audio_files[i])
+    
+    # Middle audio files
+    j = i + 1
+    file_start = time_decoder(audio_files[j].split("/")[-1].split(".")[0])
+    while j < len(audio_files)and file_start + pd.Timedelta(30, unit="m") < end:
+        # Copy file to output directory
+        os.system("cp " + audio_files[j] + " " + out_dir)
+        print("Extracted 30 minutes from " + audio_files[j])
+        j += 1
+        file_start = time_decoder(audio_files[j].split("/")[-1].split(".")[0])
+        
+    # Trim last audio file
+    rate, data = wavfile.read(audio_files[j])
+    end_index = math.floor((end - file_start).total_seconds() * rate)
+    data = data[:end_index + 1]
+    
+    # Write to file
+    wavfile.write(out_dir + sensor + "_" + time_encoder(file_start) + ".wav", rate, data)
+    print("Extracted " + pd.Timedelta(end_index / rate, unit="m") + " minutes from " + audio_files[j])
+    
+    print("Extracted " + str(j - i + 1) + " audio files from " + sensor)
+        
     return
 
 def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str, out_dir: str) -> None:
@@ -83,7 +159,6 @@ def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str, out_dir: 
             print("Could not find timestamp column in " + raw_file)
             return
             
-        # output_data = [line for line in f if pd.Timestamp(line.split(",")[col].split("\"")[1], tz=TZ) >= start and pd.Timestamp(line.split(",")[col].split("\"")[1], tz=TZ) <= end]
         output_data = []
         
         line = f.readline()
@@ -186,7 +261,7 @@ def main():
             
     # Extract audio data
     for sensor in SENSORS:
-        extract_audio(start, end, SENSORS[sensor], OUTPUT + "audio/" + sensor + "/")
+        extract_audio(start, end, sorted(SENSORS[sensor]), OUTPUT + "audio/" + sensor + "/")
     
     return
 
