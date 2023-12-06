@@ -7,8 +7,8 @@ output the filtered data into a new directory with the same structure.
 The script uses the constants to determine the location of the input
 data, the names of the individual files, and the output directory.
 
-This script requires that `numpy` and `pandas` be installed within the Python
-environment you are running this script in.
+This script requires that `numpy`, `pandas`, and `scipy` to be installed 
+within the Python environment you are running this script in.
 
 This file can also be imported as a module and contains the following
 functions:
@@ -21,17 +21,19 @@ import pandas as pd
 import numpy as np
 import argparse
 import os
+from scipy.io import wavfile
 
-#============================================== CONSTANTS ==============================================#
-PREFIX = "231016-231030"                                                    # Prefix for all raw files
+#================================================= GLOBAL VARS =================================================#
 RAW = "/mnt/w/krpm/raw/"                                                    # Location of raw files
 AUDIO = "/mnt/w/krpm/audio/"                                                # Location of audio files
 OUTPUT = "/mnt/w/krpm/output/"                                              # Location of output files
-SCHEMA = ["dataitem", "sample", "condition", "event", "device"]             # Schema for raw files
-#=======================================================================================================#
+TZ = 'EST'                                                                  # Timezone for timestamps
+SENSORS = { "sensor0": [], "sensor2" : [] }                                 # Dictionary of audio sensors
+RAWS = []                                                                   # List of raw files (don't change)
+#==============================================================================================================#
 
-def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list) -> np.array:
-    """Extract audio data between two timestamps.
+def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list, out_dir: str) -> None:
+    """Extract audio data between two timestamps and write to file.
 
     Args:
         start : pd.Timestamp
@@ -40,14 +42,16 @@ def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list) -> 
             End timestamp.
         audio_files : list
             List of audio files.
+        out_dir : str
+            Output directory.
 
     Returns:
-        np.array: Array of audio data.
+        None
     """
     return
 
-def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str) -> pd.DataFrame:
-    """Extract raw data between two timestamps.
+def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str, out_dir: str) -> None:
+    """Extract raw data between two timestamps and write to file.
 
     Args:
         start : pd.Timestamp
@@ -56,13 +60,97 @@ def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str) -> pd.Dat
             End timestamp.
         raw_file : str
             Raw file.
+        out_dir : str
+            Output directory.
 
     Returns:
-        pd.DataFrame: Dataframe of raw data.
+        None
     """
     return
 
 def main():
+    
+    global RAWS
+    global SENSORS
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        'start_time',
+        type=str,
+        help='Start timestamp in the format YYYY-MM-DD HH:MM:SS'
+    )
+    parser.add_argument(
+        'end_time',
+        type=str,
+        help='End timestamp in the format YYYY-MM-DD HH:MM:SS'
+    )
+    
+    args = parser.parse_args()
+    
+    # Verify that the start and end timestamps are valid
+    try:
+        start = pd.Timestamp(args.start_time, tz=TZ)
+    except ValueError:
+        print("Invalid start timestamp.")
+        return
+    
+    try:
+        end = pd.Timestamp(args.end_time, tz=TZ)
+    except ValueError:
+        print("Invalid end timestamp.")
+        return
+    
+    if start > end:
+        print("Start timestamp must be before end timestamp.")
+        return
+         
+    # Verify output directory does not exist
+    if os.path.isdir(OUTPUT):
+        print("Output directory already exists.")
+        return
+    
+    # Verify raw and audio directories exist
+    if not os.path.isdir(RAW):
+        print("Raw directory does not exist.")
+        return
+    else: 
+        RAWS = [f for f in os.listdir(RAW)]
+        if len(RAWS) == 0:
+            print("No raw files found.")
+    
+    if not os.path.isdir(AUDIO):
+        print("Audio directory does not exist.")
+        return
+    else:
+        # Recursively search all for audio files
+        for root, dirs, files in os.walk(AUDIO):
+            for file in files:
+                file_parts = file.split(".")
+                if file_parts[1] == "wav":
+                    SENSORS[file_parts[0].split("_")[-1]].append(os.path.join(root, file))
+                    
+        for sensor in SENSORS:
+            if len(SENSORS[sensor]) == 0:
+                print("No audio files found for sensor " + sensor)
+
+    # Create raw and audio directories in output directory
+    os.mkdir(OUTPUT)
+    os.mkdir(OUTPUT + "raw/")
+    os.mkdir(OUTPUT + "audio/")
+    for sensor in SENSORS:
+        os.mkdir(OUTPUT + "audio/" + sensor + "/")
+    
+    # Extract raw data
+    for file in RAWS:
+        extract_raw(start, end, file, OUTPUT + "raw/")
+            
+    # Extract audio data
+    for sensor in SENSORS:
+        extract_audio(start, end, SENSORS[sensor], OUTPUT + "audio/" + sensor + "/")
+    
+    print(start, end)
+    
     return
 
 if __name__ == '__main__':
