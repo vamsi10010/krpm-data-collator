@@ -22,6 +22,7 @@ import numpy as np
 import argparse
 import os
 from scipy.io import wavfile
+import re
 
 #================================================= GLOBAL VARS =================================================#
 RAW = "/mnt/w/krpm/raw/"                                                    # Location of raw files
@@ -66,6 +67,44 @@ def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str, out_dir: 
     Returns:
         None
     """
+    
+    if raw_file.endswith("dataitem.csv") or raw_file.endswith("device.csv"):
+        # Copy file to output directory
+        os.system("cp " + RAW + raw_file + " " + out_dir)
+        print("Copied " + raw_file + " to " + out_dir)
+        return
+    
+    # Read raw file:
+    with open(RAW + raw_file, "r") as f:
+        header = f.readline()
+        try:
+            col = header.split(",").index("\"timestamp\"")
+        except ValueError:
+            print("Could not find timestamp column in " + raw_file)
+            return
+            
+        # output_data = [line for line in f if pd.Timestamp(line.split(",")[col].split("\"")[1], tz=TZ) >= start and pd.Timestamp(line.split(",")[col].split("\"")[1], tz=TZ) <= end]
+        output_data = []
+        
+        line = f.readline()
+        timestamp = pd.Timestamp(re.findall('"([^"]*)"', line)[col], tz=TZ)
+        while timestamp < start:
+            line = f.readline()
+            timestamp = pd.Timestamp(re.findall('"([^"]*)"', line)[col], tz=TZ)
+            
+        while timestamp <= end:
+            output_data.append(line)
+            line = f.readline()
+            timestamp = pd.Timestamp(re.findall('"([^"]*)"', line)[col], tz=TZ)
+        
+    # Write to file
+    with open(out_dir + raw_file, "w") as f:
+        f.write(header)
+        for line in output_data:
+            f.write(line)
+            
+    print("Extracted " + str(len(output_data)) + " lines from " + raw_file)
+    
     return
 
 def main():
@@ -148,8 +187,6 @@ def main():
     # Extract audio data
     for sensor in SENSORS:
         extract_audio(start, end, SENSORS[sensor], OUTPUT + "audio/" + sensor + "/")
-    
-    print(start, end)
     
     return
 
