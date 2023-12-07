@@ -7,7 +7,7 @@ output the filtered data into a new directory with the same structure.
 The script uses the constants to determine the location of the input
 data, the names of the individual files, and the output directory.
 
-This script requires that `numpy`, `pandas`, and `scipy` to be installed 
+This script requires that `pandas` and `scipy` to be installed 
 within the Python environment you are running this script in.
 
 This file can also be imported as a module and contains the following
@@ -20,7 +20,6 @@ functions:
 """
 
 import pandas as pd
-import numpy as np
 import argparse
 import os
 from scipy.io import wavfile
@@ -30,10 +29,11 @@ import math
 #================================================= GLOBAL VARS =================================================#
 RAW = "/mnt/w/krpm/raw/"                                                    # Location of raw files
 AUDIO = "/mnt/w/krpm/audio/"                                                # Location of audio files
-OUTPUT = "/mnt/w/krpm/output/"                                              # Location of output files
+OUTPUT = "/mnt/w/krpm/good_1/"                                              # Location of output files
 TZ = 'EST'                                                                  # Timezone for timestamps
-SENSORS = { "sensor0": [], "sensor2" : [] }                                 # Dictionary of audio sensors
+SENSORS = { "sensor0": [] , "sensor2" : [] }                                # To store files of audio sensors
 RAWS = []                                                                   # List of raw files (don't change)
+MACHINE = "KR_Mazak1"                                                       # Machine name
 #==============================================================================================================#
 
 def time_encoder(time: pd.Timestamp) -> str:
@@ -83,10 +83,10 @@ def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list, out
     # Find first audio file that contains data
     i = 0
     sensor = re.split('[_.]', audio_files[i])[-2]
-    file_start = time_decoder(audio_files[i].split("/")[-1].split(".")[0])
+    file_start = time_decoder(audio_files[i].split("/")[-1].split("Z")[0])
     while i < len(audio_files) and file_start + pd.Timedelta(30, unit="m") < start:
         i += 1
-        file_start = time_decoder(audio_files[i].split("/")[-1].split(".")[0]) 
+        file_start = time_decoder(audio_files[i].split("/")[-1].split("Z")[0]) 
     
     if i == len(audio_files):
         print("No audio files found for sensor " + sensor)
@@ -101,18 +101,18 @@ def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list, out
     file_start += pd.Timedelta(start_index / rate, unit="s")
     
     # Write to file
-    wavfile.write(out_dir + sensor + "_" + time_encoder(file_start) + ".wav", rate, data)
-    print("Extracted " + pd.Timedelta(30 - start_index / rate, unit="m") + " minutes from " + audio_files[i])
+    wavfile.write(out_dir + time_encoder(file_start) + "Z_" + MACHINE + "_" + sensor + ".wav", rate, data)
+    print("Extracted from " + audio_files[i])
     
     # Middle audio files
     j = i + 1
-    file_start = time_decoder(audio_files[j].split("/")[-1].split(".")[0])
+    file_start = time_decoder(audio_files[j].split("/")[-1].split("Z")[0])
     while j < len(audio_files)and file_start + pd.Timedelta(30, unit="m") < end:
         # Copy file to output directory
         os.system("cp " + audio_files[j] + " " + out_dir)
-        print("Extracted 30 minutes from " + audio_files[j])
+        print("Extracted from " + audio_files[j])
         j += 1
-        file_start = time_decoder(audio_files[j].split("/")[-1].split(".")[0])
+        file_start = time_decoder(audio_files[j].split("/")[-1].split("Z")[0])
         
     # Trim last audio file
     rate, data = wavfile.read(audio_files[j])
@@ -120,8 +120,8 @@ def extract_audio(start: pd.Timestamp, end: pd.Timestamp, audio_files: list, out
     data = data[:end_index + 1]
     
     # Write to file
-    wavfile.write(out_dir + sensor + "_" + time_encoder(file_start) + ".wav", rate, data)
-    print("Extracted " + pd.Timedelta(end_index / rate, unit="m") + " minutes from " + audio_files[j])
+    wavfile.write(out_dir + time_encoder(file_start) + "Z_" + MACHINE + "_" + sensor + ".wav", rate, data)
+    print("Extracted from " + audio_files[j])
     
     print("Extracted " + str(j - i + 1) + " audio files from " + sensor)
         
@@ -153,6 +153,8 @@ def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str, out_dir: 
     # Read raw file:
     with open(RAW + raw_file, "r") as f:
         header = f.readline()
+        cols = re.findall('"([^"]*)"', header)
+        
         try:
             col = header.split(",").index("\"timestamp\"")
         except ValueError:
@@ -162,14 +164,22 @@ def extract_raw(start: pd.Timestamp, end: pd.Timestamp, raw_file: str, out_dir: 
         output_data = []
         
         line = f.readline()
+        if (len(re.findall('"([^"]*)"', line)) != len(cols)-1):       # there are some lines with "\n" that breaks the line reading
+            line += f.readline()
         timestamp = pd.Timestamp(re.findall('"([^"]*)"', line)[col], tz=TZ)
         while timestamp < start:
             line = f.readline()
+            if (len(re.findall('"([^"]*)"', line)) != len(cols)-1):
+                line += f.readline()
+                
             timestamp = pd.Timestamp(re.findall('"([^"]*)"', line)[col], tz=TZ)
             
         while timestamp <= end:
             output_data.append(line)
             line = f.readline()
+            if (len(re.findall('"([^"]*)"', line)) != len(cols)-1):       
+                line += f.readline()
+                
             timestamp = pd.Timestamp(re.findall('"([^"]*)"', line)[col], tz=TZ)
         
     # Write to file
@@ -241,11 +251,11 @@ def main():
         for root, dirs, files in os.walk(AUDIO):
             for file in files:
                 file_parts = file.split(".")
-                if file_parts[1] == "wav":
-                    SENSORS[file_parts[0].split("_")[-1]].append(os.path.join(root, file))
+                if file_parts[-1] == "wav":
+                    SENSORS[file_parts[1].split("_")[-1]].append(os.path.join(root, file))
                     
         for sensor in SENSORS:
-            if len(SENSORS[sensor]) == 0:
+            if len(SENSORS) == 0:
                 print("No audio files found for sensor " + sensor)
 
     # Create raw and audio directories in output directory
